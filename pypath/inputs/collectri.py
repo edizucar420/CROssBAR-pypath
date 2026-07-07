@@ -121,34 +121,49 @@ def collectri_raw(
     _ = next(c.result)
 
     result = []
+    total_lines = 0 
+    parsed_lines = 0 
 
     for l in c.result:
-
-        l = l.strip().split(',')
-        mmirna = remirna.match(l[1])
-
+        total_lines += 1 
+        
+        
+        fields = l.strip().split(',')
+        if len(fields) < 7: 
+            _log(f"Uyarı: Hatalı satır atlanıyor: {l.strip()}")
+            continue
+            
+        parsed_lines += 1 
+        
+       
+        tf, target, effect, tf_cat, res, pmid, sign_dec = fields[:7]
+        
+        mmirna = remirna.match(target)
         if (
             (mmirna and not mirna) or
             (not mmirna and not protein_coding)
         ):
-
             continue
 
-        target_id = f'hsa-miR-{mmirna.group(1)}' if mmirna else l[1]
+        target_id = f'hsa-miR-{mmirna.group(1)}' if mmirna else target
 
         result.append(
             CollectriRecord(
-                tf = l[0],
+                tf = tf,
                 target = target_id,
-                effect = int(l[2]),
-                tf_category = l[3],
-                resources = l[4].replace('DoRothEA_A', 'DoRothEA-A'),
-                pubmed = l[5],
-                sign_decision = l[6],
+                effect = int(effect),
+                tf_category = tf_cat,
+                resources = res.replace('DoRothEA_A', 'DoRothEA-A'),
+                pubmed = pmid,
+                sign_decision = sign_dec,
                 target_type = 'mirna' if mmirna else 'protein',
             )
         )
 
+
+
+
+    
     return result
 
 
@@ -162,12 +177,6 @@ def collectri_interactions(
     While `collectri_raw` returns the records in the same format as in the
     original data, here we translate identifiers to UniProt IDs, and use
     `Complex` objects to represent protein complexes.
-
-    Args:
-        protein_coding:
-            Include regulation of protein coding genes.
-        mirna:
-            Include regulation of miRNA coding genes.
     """
 
     CollectriInteraction = collections.namedtuple(
@@ -184,24 +193,18 @@ def collectri_interactions(
         ),
     )
 
-
     def process_complex(name):
-
         result = []
 
         for var in COMPLEXES[name]:
-
             uniprots = [
                 mapping.map_name(comp, 'genesymbol', 'uniprot')
                 for comp in var.split('-')
             ]
 
             if all(uniprots):
-
                 result.extend(list(itertools.product(*uniprots)))
-
             else:
-
                 _log(
                     'Failed to translate all components of '
                     f'complex `{name}` (components: {var}).'
@@ -209,29 +212,30 @@ def collectri_interactions(
 
         return set(result)
 
+    
+    result = []
 
-    for rec in collectri_raw(protein_coding = protein_coding, mirna = mirna):
-
+    for rec in collectri_raw(protein_coding=protein_coding, mirna=mirna):
         tf_uniprots = (
             process_complex(rec.tf)
-                if rec.tf in COMPLEXES else
+            if rec.tf in COMPLEXES else
             mapping.map_name(rec.tf, 'genesymbol', 'uniprot')
         )
 
         target_uniprots = (
             (rec.target,)
-                if rec.target_type == 'mirna' else
+            if rec.target_type == 'mirna' else
             mapping.map_name(rec.target, 'genesymbol', 'uniprot')
         )
 
         for tf_u, t_u in itertools.product(tf_uniprots, target_uniprots):
-
             if isinstance(tf_u, tuple):
-
                 tf_u = intera.Complex(
-                    components = tf_u,
-                    sources = 'CollecTRI',
+                    components=tf_u,
+                    sources='CollecTRI',
                 )
 
-            yield CollectriInteraction(tf_u, t_u, *rec[2:])
+           
+            result.append(CollectriInteraction(tf_u, t_u, *rec[2:]))
 
+    return result
