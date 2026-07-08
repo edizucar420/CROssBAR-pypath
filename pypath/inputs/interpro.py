@@ -336,9 +336,9 @@ def interpro_annotations(
 
     """
 
-    import os
-    import gzip
     import collections
+    import pypath.share.curl as curl
+    import pypath.resources.urls as urls
 
     InterproAnnotation = collections.namedtuple(
         'InterproAnnotation',
@@ -347,18 +347,14 @@ def interpro_annotations(
 
     annotations = collections.defaultdict(set)
 
-    # BULK DATA PATH
-    BULK_FILE_PATH = os.getenv("INTERPRO_BULK_PATH")
-
-    if not BULK_FILE_PATH:
-        BULK_FILE_PATH = _download_protein2ipr_bulk_file()
-
     MAX_LINES = None  # set integer value for debugging
 
     # =========================
     # BULK MODE
     # =========================
-    if os.path.exists(BULK_FILE_PATH):
+    try:
+        bulk_url = urls.urls['interpro']['protein2ipr']
+        c = curl.Curl(bulk_url, silent=False, large=True, compr='gz')
 
         filter_ids = set(
             uniprot._all_uniprots(
@@ -367,56 +363,48 @@ def interpro_annotations(
             )
         )
 
+        for i, line in enumerate(c.result):
 
+            if MAX_LINES and i >= MAX_LINES:
+                break
 
-        with gzip.open(BULK_FILE_PATH, 'rt', encoding='utf-8', errors='ignore') as f:
-            for i, line in enumerate(f):
+            parts = line.strip().split('\t')
 
+            if len(parts) < 6:
+                continue
 
+            try:
+                uniprot_id = parts[0]
+                interpro_id = parts[1]
+                start = int(parts[4])
+                end = int(parts[5])
 
-                if MAX_LINES and i >= MAX_LINES:
-                    break
+            except Exception as e:
+                continue
 
-                parts = line.strip().split('\t')
+            if uniprot_id not in filter_ids:
+                continue
 
-                if len(parts) < 6:
-                    continue
-
-                try:
-                    uniprot_id = parts[0]
-                    interpro_id = parts[1]
-                    start = int(parts[4])
-                    end = int(parts[5])
-
-
-                except Exception as e:
-                    continue
-
-                if uniprot_id not in filter_ids:
-                    continue
-
-                annotations[uniprot_id].add(
-                    InterproAnnotation(
-                        interpro_id=interpro_id,
-                        organism=tax_id,  # bulk dataset does not include organism, using input tax_id
-                        start=start,
-                        end=end
-                    )
+            annotations[uniprot_id].add(
+                InterproAnnotation(
+                    interpro_id=interpro_id,
+                    organism=tax_id,  # bulk dataset does not include organism, using input tax_id
+                    start=start,
+                    end=end
                 )
+            )
 
         return annotations
 
-    # =========================
-    # FALLBACK: API MODE
-    # =========================
-    print("Bulk file not found, falling back to API...")
+    except Exception as e:
 
-    return _interpro_annotations_api(
-        page_size=page_size,
-        reviewed=reviewed,
-        tax_id=tax_id
-    )
+        print(f"Bulk mode failed ({e}), falling back to API...")
 
+        return _interpro_annotations_api(
+            page_size=page_size,
+            reviewed=reviewed,
+            tax_id=tax_id
+        )
 def interpro2go_annotations() -> dict[str, set[tuple]]:
     """
     Downloads GO term annotations for InterPro entries.
@@ -473,16 +461,3 @@ def interpro2go_annotations() -> dict[str, set[tuple]]:
                 continue
 
     return annotations
-def _download_protein2ipr_bulk_file():
-    """
-    Downloads the protein2ipr.dat.gz bulk file using pypath's curl
-    (with caching) and returns the local path to the downloaded file.
-    """
-
-    import pypath.share.curl as curl
-    import pypath.resources.urls as urls
-
-    bulk_url = urls.urls['interpro']['protein2ipr']
-    c = curl.Curl(bulk_url, silent=False, large=True, write_cache=True)
-
-    return c.cache_file_name
