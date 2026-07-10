@@ -328,17 +328,7 @@ def interpro_annotations(
 ) -> dict:
     """
     Downloads UniProtKB proteins and the InterPro entries they match.
-
-    NOTE:
-    - Default implementation uses BULK dataset (protein2ipr.dat.gz) for performance.
-    - Falls back to API if bulk file is not available.
-    - This behavior can be changed if needed.
-
     """
-
-    import collections
-    import pypath.share.curl as curl
-    import pypath.resources.urls as urls
 
     InterproAnnotation = collections.namedtuple(
         'InterproAnnotation',
@@ -347,11 +337,6 @@ def interpro_annotations(
 
     annotations = collections.defaultdict(set)
 
-    MAX_LINES = None  # set integer value for debugging
-
-    # =========================
-    # BULK MODE
-    # =========================
     try:
         bulk_url = urls.urls['interpro']['protein2ipr']
         c = curl.Curl(bulk_url, silent=False, large=True, compr='gz')
@@ -363,10 +348,7 @@ def interpro_annotations(
             )
         )
 
-        for i, line in enumerate(c.result):
-
-            if MAX_LINES and i >= MAX_LINES:
-                break
+        for line in c.result:
 
             parts = line.strip().split('\t')
 
@@ -391,8 +373,7 @@ def interpro_annotations(
                     organism=tax_id,  # bulk dataset does not include organism, using input tax_id
                     start=start,
                     end=end
-                )
-            )
+                ))
 
         return annotations
 
@@ -405,6 +386,7 @@ def interpro_annotations(
             reviewed=reviewed,
             tax_id=tax_id
         )
+
 def interpro2go_annotations() -> dict[str, set[tuple]]:
     """
     Downloads GO term annotations for InterPro entries.
