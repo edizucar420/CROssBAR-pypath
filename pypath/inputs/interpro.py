@@ -328,17 +328,7 @@ def interpro_annotations(
 ) -> dict:
     """
     Downloads UniProtKB proteins and the InterPro entries they match.
-
-    NOTE:
-    - Default implementation uses BULK dataset (protein2ipr.dat.gz) for performance.
-    - Falls back to API if bulk file is not available.
-    - This behavior can be changed if needed.
-
     """
-
-    import os
-    import gzip
-    import collections
 
     InterproAnnotation = collections.namedtuple(
         'InterproAnnotation',
@@ -347,18 +337,9 @@ def interpro_annotations(
 
     annotations = collections.defaultdict(set)
 
-    # BULK DATA PATH
-    BULK_FILE_PATH = os.getenv(
-    "INTERPRO_BULK_PATH",
-    r"D:\derssel\CROSSBAR\protein2ipr.dat.gz"
-    )
-
-    MAX_LINES = None  # set integer value for debugging
-
-    # =========================
-    # BULK MODE
-    # =========================
-    if os.path.exists(BULK_FILE_PATH):
+    try:
+        bulk_url = urls.urls['interpro']['protein2ipr']
+        c = curl.Curl(bulk_url, silent=False, large=True, compr='gz')
 
         filter_ids = set(
             uniprot._all_uniprots(
@@ -367,55 +348,44 @@ def interpro_annotations(
             )
         )
 
+        for line in c.result:
 
+            parts = line.strip().split('\t')
 
-        with gzip.open(BULK_FILE_PATH, 'rt', encoding='utf-8', errors='ignore') as f:
-            for i, line in enumerate(f):
+            if len(parts) < 6:
+                continue
 
+            try:
+                uniprot_id = parts[0]
+                interpro_id = parts[1]
+                start = int(parts[4])
+                end = int(parts[5])
 
+            except Exception as e:
+                continue
 
-                if MAX_LINES and i >= MAX_LINES:
-                    break
+            if uniprot_id not in filter_ids:
+                continue
 
-                parts = line.strip().split('\t')
-
-                if len(parts) < 6:
-                    continue
-
-                try:
-                    uniprot_id = parts[0]
-                    interpro_id = parts[1]
-                    start = int(parts[4])
-                    end = int(parts[5])
-
-
-                except Exception as e:
-                    continue
-
-                if uniprot_id not in filter_ids:
-                    continue
-
-                annotations[uniprot_id].add(
-                    InterproAnnotation(
-                        interpro_id=interpro_id,
-                        organism=tax_id,  # bulk dataset does not include organism, using input tax_id
-                        start=start,
-                        end=end
-                    )
-                )
+            annotations[uniprot_id].add(
+                InterproAnnotation(
+                    interpro_id=interpro_id,
+                    organism=tax_id,  # bulk dataset does not include organism, using input tax_id
+                    start=start,
+                    end=end
+                ))
 
         return annotations
 
-    # =========================
-    # FALLBACK: API MODE
-    # =========================
-    print("Bulk file not found, falling back to API...")
+    except Exception as e:
 
-    return _interpro_annotations_api(
-        page_size=page_size,
-        reviewed=reviewed,
-        tax_id=tax_id
-    )
+        _log(f"Bulk mode failed ({e}), falling back to API...")
+
+        return _interpro_annotations_api(
+            page_size=page_size,
+            reviewed=reviewed,
+            tax_id=tax_id
+        )
 
 def interpro2go_annotations() -> dict[str, set[tuple]]:
     """
@@ -425,21 +395,14 @@ def interpro2go_annotations() -> dict[str, set[tuple]]:
         Dict of InterPro entries as keys and sets of GO terms as values.
     """
 
-    import requests
-    import collections
-
     url = urls.urls['interpro']['interpro2go']
-
-    response = requests.get(url)
-    response.raise_for_status()
-
-    lines = response.text.splitlines()
-
-    if not lines:
-        raise ValueError(
-            f"Failed to download interpro2go from {url}"
-        )
-
+    c = curl.Curl(
+        url,
+        req_headers=['User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'],
+        large=True,
+        silent=False,
+    )
+    
     Interpro2GOAnnotation = collections.namedtuple(
         'Interpro2GOAnnotation',
         (
@@ -450,26 +413,20 @@ def interpro2go_annotations() -> dict[str, set[tuple]]:
 
     annotations = collections.defaultdict(set)
 
-    for r in lines:
+    for r in c.result:
 
         if not r.startswith('!'):
 
             r = r.strip()
+            interpro_id = r.split('InterPro:')[1].split(' ')[0]
+            go_term_name = r.split('> GO:')[1].split(' ; ')[0]
+            go_term_id = r.split('> GO:')[1].split(' ; ')[1]
 
-            try:
-                interpro_id = r.split('InterPro:')[1].split(' ')[0]
-                go_term_name = r.split('> GO:')[1].split(' ; ')[0]
-                go_term_id = r.split('> GO:')[1].split(' ; ')[1]
-
-                annotations[interpro_id].add(
-                    Interpro2GOAnnotation(
-                        go_term_id=go_term_id,
-                        go_term_name=go_term_name
-                    )
+            annotations[interpro_id].add(
+                Interpro2GOAnnotation(
+                    go_term_id = go_term_id,
+                    go_term_name = go_term_name
                 )
-
-            except Exception:
-                # malformed line → skip
-                continue
+            )
 
     return annotations
